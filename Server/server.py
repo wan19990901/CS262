@@ -70,39 +70,43 @@ class Server:
             c.send(data.encode('ascii'))
             # Start a new thread and return its identifier
             start_new_thread(self.threaded, (c,))
-    def close_server(self):        
-        """
-        Stop the chat room server.
-        """
-        try:
-            self.s.shutdown(socket.SHUT_RDWR)
-            self.s.close()
-            print ("Server closed")
-        except:
-            print("Server not started")
-    def account_creation(self,username,c):
+    # def close_server(self):        
+    #     """
+    #     Stop the chat room server.
+    #     """
+    #     try:
+    #         self.s.shutdown(socket.SHUT_RDWR)
+    #         self.s.close()
+    #         print ("Server closed")
+    #     except:
+    #         print("Server not started")
+    def account_creation(self, username, c):
         """
         Create a new account with the given username and connection.
 
         Parameters:
         username (str): The username for the new account.
         c (socket): The connection to the client.
+        addr (tuple): The client address.
 
         Returns:
         str: A message indicating the status of the account creation.
         """
-        new_user = User(username)
-        self.name_list.append(username)
-        accountID = str(new_user.ID)
-        self.accountName_table[accountID] = new_user
-        # accountMsg_table[accountID] = []
-        self.connections[accountID] = c
-        self.connections_id[c] = accountID
-        print("New User created. key: " + str(accountID) + "\n")
-        data = "Success New Account Creation! Your new Account ID: " + str(accountID) + "\n"
+        account_data = self.read_accounts_csv()
+        if username in account_data['Username'].values:
+            return f"Username {username} already exists. Please try a different username."
+
+        new_id = account_data['ID'].max() + 1 if not account_data.empty else 1
+        new_id = str(new_id)
+        socket_string = str(c.getpeername())
+        new_user = {'Username': username, 'ID': new_id, 'Connection': socket_string, 'Active_Status': True, 'Queue': '[]'}
+        account_data = account_data.append(new_user, ignore_index=True)
+        self.write_accounts_csv(account_data)
+        print(f"New User created. key: {new_id}\n")
+        data = f"Success New Account Creation! Your new Account ID: {new_id}\n"
         return data
 
-    def list_accounts(self,pattern):
+    def list_accounts(self, pattern):
         """
         List the accounts whose usernames match the given pattern.
 
@@ -112,26 +116,27 @@ class Server:
         Returns:
         str: A message listing the accounts whose usernames match the pattern.
         """
-        accountPre = str(pattern)
-        rematch = "^" + accountPre + "$"
+        account_data = self.read_accounts_csv()
+        account_pre = str(pattern)
+        rematch = "^" + account_pre + "$"
         print("key: " + str(pattern) + "\n")
         regex = re.compile(rematch)
-        matches = [string for string in [val.name for _, val in self.accountName_table.items()] if re.match(regex, string)]
+
+        matches = [username for username in account_data['Username'] if re.match(regex, username)]
 
         if len(matches):
-            
             for m in range(len(matches)):
                 print("Account matched: " + matches[m] + "\n")
 
-            data = "Account matched: " + ','.join(matches) +"\n"
-        # matching account doesn't exist, no account ID is associated
+            data = "Account matched: " + ','.join(matches) + "\n"
         else:
-            print("Account matched doesnt exist: " + str(accountPre)  + "\n")
-            data = "Account matched to: " +  str(accountPre) + " doesn't exist \n"
+            print("Account matched doesn't exist: " + str(account_pre) + "\n")
+            data = "Account matched to: " + str(account_pre) + " doesn't exist \n"
         return data
-    def send_message(self,name,msg,c):
+
+    def send_message(self, name, msg, c):
         """
-        Send message to a speific account accounts with a given username.
+        Send message to a specific account with a given username.
 
         Parameters:
         name (str): The name (NOT ID) of the recipient
@@ -139,56 +144,74 @@ class Server:
         c (socket): The connection to the client.
 
         Returns:
-        str: A message showing whether to message is deliveried succesfully; 
+        str: A message showing whether the message is delivered successfully; 
         """
+        account_data = self.read_accounts_csv()
         receiver = name
-        if receiver in self.name_list:
-            for id, user in self.accountName_table.items():
-                if user.name == receiver:
-                    rscv_ID = str(user.ID)
-            sender = self.accountName_table[self.connections_id[c]].name
-            message = str(sender) + " sends: "+  str(msg) + "\n"
-            if self.accountName_table[rscv_ID].active:
-                client = self.connections[rscv_ID]
-                data = "Sender " +  str(sender) + " sends a new message " + str(msg) + " to " + str(receiver) + "\n"
+
+        if receiver in account_data['Username'].values:
+            receiver_row = account_data[account_data['Username'] == receiver].iloc[0]
+            rscv_ID = str(receiver_row['ID'])
+            sender_socket_string = str(c.getpeername())
+            sender_row = account_data[account_data['Connection'] == sender_socket_string].iloc[0]
+            sender = sender_row['Username']
+            message = str(sender) + " sends: " + str(msg) + "\n"
+
+            if receiver_row['Active_Status']:
+                client = self.get_connection_by_socket_string(receiver_row['Connection'])
+                data = "Sender " + str(sender) + " sends a new message " + str(msg) + " to " + str(receiver) + "\n"
                 client.send((str(sender) + ": " + str(msg)).encode('ascii'))
                 print(data)
             else:
-                data = "message from " + sender + " has been delivered to " + receiver + "'s mailbox\n"
-                self.accountName_table[rscv_ID].queue.append(message)
+                data = "Message from " + sender + " has been delivered to " + receiver + "'s mailbox\n"
+                queue = eval(receiver_row['Queue'])
+                queue.append(message)
+                account_data.loc[account_data['ID'] == rscv_ID, 'Queue'] = str(queue)
+                self.write_accounts_csv(account_data)
                 print(data)
         else:
-            print("Receiver doesnt exist: " + str(receiver)  + "\n")
-            data = "Receiver: " +  str(receiver) + " doesn't exist \n"
+            print("Receiver doesn't exist: " + str(receiver) + "\n")
+            data = "Receiver: " + str(receiver) + " doesn't exist \n"
         return data
-    def pop_undelivered(self,id):
+
+    def pop_undelivered(self, id):
         """
-        Delivered queued message to a particular user
+        Deliver queued messages to a particular user.
 
         Parameters:
-        id (str): The user ID to be delivered
+        id (str): The user ID to be delivered.
 
         Returns:
-        str: A message showing the status of the action
+        str: A message showing the status of the action.
         """
+        account_data = self.read_accounts_csv()
+
         try:
             accountID = str(id)
-            user = self.accountName_table[accountID]
+            user_row = account_data[account_data['ID'] == int(accountID)].iloc[0]
         except:
             data = 'User not Found '
             return data
-        q = user.queue
+
+        q = eval(user_row['Queue'])
+
         if q:
-            data = f"undelivered message for user ID {accountID}: \n" 
+            data = f"Undelivered messages for user ID {accountID}: \n"
             while q:
                 new_msg = q.pop(0)
                 data += new_msg + "\n"
+
+            # Update the queue in the accounts CSV
+            account_data.loc[account_data['ID'] == int(accountID), 'Queue'] = str(q)
+            self.write_accounts_csv(account_data)
         else:
             data = "No new messages\n"
+
         return data
-    def delete_account(self,id):
+
+    def delete_account(self, id):
         """
-        Delete a particular user from the sever permanantly
+        Delete a particular user from the sever permanently
 
         Parameters:
         id (str): The user ID to be delivered
@@ -197,28 +220,32 @@ class Server:
         str: A message showing the status of the actions
         """
         accountID = str(id)
-        try:
-            user = self.accountName_table[accountID]
-        except:
+        accounts_df = self.read_accounts_csv()
+
+        user_row = accounts_df.loc[accounts_df['ID'] == accountID]
+
+        if user_row.empty:
             return "User Not Found! "
-        name = user.name
-        q = user.queue
+
+        q = eval(user_row.iloc[0]['Queue'])
         if q:
             data = "Please check your mailbox before deleting your account! \n"
             return data
         else:
-            self.name_list.remove(name)
-            
-            del self.accountName_table[accountID]
-            try:
-                old_c = self.connections[accountID]
-                del self.connections_id[old_c]
-                del self.connections[accountID]
-            except:
-                pass
-        print("Account ID: " +  str(accountID) + " has been deleted" + "\n")
+            # Delete user from the accounts DataFrame
+            accounts_df = accounts_df[accounts_df['ID'] != accountID]
+            self.write_accounts_csv(accounts_df)
+
+            # Remove connection from active_connections
+            connection_string = user_row.iloc[0]['Connection']
+            if connection_string in self.active_connections:
+                connection = self.active_connections[connection_string]
+                self.close_connection(connection)
+
+        print(f"Account ID: {accountID} has been deleted\n")
         data = "Your account has been deleted\n"
         return data
+
     # thread function
     def threaded(self,c):
         """
@@ -243,11 +270,16 @@ class Server:
             data_str = data.decode('UTF-8')
             # Log out
             if not data:
-                if c in self.connections_id.keys():
-                    userid = self.connections_id[c]
-                    user = self.accountName_table[userid]
-                    username = user.name
-                    user.active = False
+                socket_string = str(c.getpeername())
+                # Find the row in the accounts DataFrame corresponding to the socket_string
+                account_df = self.read_accounts_csv()
+                row = account_df.loc[account_df['Connection'] == socket_string]
+                if not row.empty:
+                    # Set the Active_Status to False
+                    account_df.loc[account_df['Connection'] == socket_string, 'Active_Status'] = False
+                    self.write_accounts_csv(account_df)
+                    # Log the user logout
+                    username = row.iloc[0]['Username']
                     print(username + " has logged out of the system\n")
                 break
             # print user input
@@ -259,18 +291,23 @@ class Server:
             # Login
             if opcode == '0':
                 try:
-                    if(str(data_list[1]) in self.accountName_table.keys()):
-                        user = self.accountName_table[str(data_list[1])]
-                        user.active = True
-                        self.connections[str(data_list[1])] = c
-                        self.connections_id[c] = str(data_list[1])
-                        print(f'user : {user.name} is now logged in\n')
-                        data = f'user : {user.name} is now logged in\n'
+                    account_data = self.read_accounts_csv()
+                    user = account_data.loc[account_data['ID'] == str(data_list[1])]
+                    if not user.empty:
+                        user_id = str(user.iloc[0]['ID'])
+                        user_name = user.iloc[0]['Username']
+                        socket_string = str(c.getpeername())
+                        account_data.loc[account_data['ID'] == user_id, 'Active_Status'] = True
+                        account_data.loc[account_data['ID'] == user_id, 'Connection'] = socket_string
+                        self.write_accounts_csv(account_data)
+                        print(f'user : {user_name} is now logged in\n')
+                        data = f'user : {user_name} is now logged in\n'
                     else:
-                        data = f'user with ID : {data_list[1]} is not recognized in the system, please try a different name or create a new one\n'
+                        data = f'user with ID : {data_list[1]} is not recognized in the system, please try a different ID or create a new one\n'
                     c.send(data.encode('ascii'))
                 except:
                     c.send(self.err_msg.encode('ascii'))
+
             elif opcode == '1':
                 #account creation
                 try:
@@ -321,11 +358,7 @@ class Server:
                 c.send(self.err_msg.encode('ascii'))
         # connection closed
         # When no user was attached to the current connection
-        try:
-            del self.connections_id[c]
-        except:
-            pass
-        c.close()
+        self.close_connection(c)
 def Main():
     server = Server()
     server.start_server()
