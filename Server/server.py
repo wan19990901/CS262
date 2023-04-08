@@ -5,6 +5,7 @@ import re
 from _thread import *
 import pandas as pd
 import os
+import time
 class Server:
     err_msg = 'Please give a valid input as instructed in the documentation'
     def __init__(self):
@@ -36,17 +37,10 @@ class Server:
         if socket_string in self.active_connections:
             return self.active_connections[socket_string]
 
-        ip, port = socket_string.split(':')
-        addr = (ip, int(port))
-        connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        connection.connect(addr)
-        self.active_connections[socket_string] = connection
-        return connection
-
     def close_connection(self, connection):
-        socket_string = str(connection.getpeername())
-        if socket_string in self.active_connections:
-            del self.active_connections[socket_string]
+        # socket_string = str(connection.getpeername())
+        # if socket_string in self.active_connections:
+        #     del self.active_connections[socket_string]
         connection.close()
 
 
@@ -99,6 +93,7 @@ class Server:
         new_id = account_data['ID'].max() + 1 if not account_data.empty else 1
         new_id = str(new_id)
         socket_string = str(c.getpeername())
+        self.active_connections[socket_string] = c
         new_user = {'Username': username, 'ID': new_id, 'Connection': socket_string, 'Active_Status': True, 'Queue': '[]'}
         account_data = account_data.append(new_user, ignore_index=True)
         self.write_accounts_csv(account_data)
@@ -157,16 +152,22 @@ class Server:
             sender = sender_row['Username']
             message = str(sender) + " sends: " + str(msg) + "\n"
 
-            if receiver_row['Active_Status']:
+            # Save the message in messages.csv
+            messages_df = pd.read_csv('messages.csv')
+            new_message = {'Sender': sender, 'Receiver': receiver, 'Message': msg, 'Time': time.time()}
+            messages_df = messages_df.append(new_message, ignore_index=True)
+            messages_df.to_csv('messages.csv', index=False)
+
+            if (receiver_row['Active_Status'] == True):
                 client = self.get_connection_by_socket_string(receiver_row['Connection'])
-                data = "Sender " + str(sender) + " sends a new message " + str(msg) + " to " + str(receiver) + "\n"
+                data = "Sender " + str(sender) + " sends a new message: " + str(msg) + " to " + str(receiver) + "\n"
                 client.send((str(sender) + ": " + str(msg)).encode('ascii'))
                 print(data)
             else:
                 data = "Message from " + sender + " has been delivered to " + receiver + "'s mailbox\n"
                 queue = eval(receiver_row['Queue'])
                 queue.append(message)
-                account_data.loc[account_data['ID'] == rscv_ID, 'Queue'] = str(queue)
+                account_data.loc[account_data['ID'] == int(rscv_ID), 'Queue'] = str(queue)
                 self.write_accounts_csv(account_data)
                 print(data)
         else:
@@ -219,7 +220,7 @@ class Server:
         Returns:
         str: A message showing the status of the actions
         """
-        accountID = str(id)
+        accountID = int(id)
         accounts_df = self.read_accounts_csv()
 
         user_row = accounts_df.loc[accounts_df['ID'] == accountID]
@@ -235,12 +236,6 @@ class Server:
             # Delete user from the accounts DataFrame
             accounts_df = accounts_df[accounts_df['ID'] != accountID]
             self.write_accounts_csv(accounts_df)
-
-            # Remove connection from active_connections
-            connection_string = user_row.iloc[0]['Connection']
-            if connection_string in self.active_connections:
-                connection = self.active_connections[connection_string]
-                self.close_connection(connection)
 
         print(f"Account ID: {accountID} has been deleted\n")
         data = "Your account has been deleted\n"
@@ -274,6 +269,7 @@ class Server:
                 # Find the row in the accounts DataFrame corresponding to the socket_string
                 account_df = self.read_accounts_csv()
                 row = account_df.loc[account_df['Connection'] == socket_string]
+                print(row)
                 if not row.empty:
                     # Set the Active_Status to False
                     account_df.loc[account_df['Connection'] == socket_string, 'Active_Status'] = False
@@ -290,22 +286,25 @@ class Server:
             print("Opcode:" + str(opcode))
             # Login
             if opcode == '0':
-                try:
+                try: 
+                    user_id = int(data_list[1])
                     account_data = self.read_accounts_csv()
-                    user = account_data.loc[account_data['ID'] == str(data_list[1])]
-                    if not user.empty:
-                        user_id = str(user.iloc[0]['ID'])
-                        user_name = user.iloc[0]['Username']
+                    if (user_id in account_data['ID'].values):
+                        print(account_data.loc[account_data['ID'] == user_id])
+                        user_name = account_data.loc[account_data['ID'] == user_id]['Username'].values[0]
                         socket_string = str(c.getpeername())
                         account_data.loc[account_data['ID'] == user_id, 'Active_Status'] = True
                         account_data.loc[account_data['ID'] == user_id, 'Connection'] = socket_string
                         self.write_accounts_csv(account_data)
+                        self.active_connections[socket_string] = c
                         print(f'user : {user_name} is now logged in\n')
                         data = f'user : {user_name} is now logged in\n'
                     else:
+                        print(account_data['ID'])
                         data = f'user with ID : {data_list[1]} is not recognized in the system, please try a different ID or create a new one\n'
                     c.send(data.encode('ascii'))
-                except:
+                except Exception as e:
+                    print(e)
                     c.send(self.err_msg.encode('ascii'))
 
             elif opcode == '1':
@@ -314,7 +313,8 @@ class Server:
                     username = str(data_list[1])
                     data = self.account_creation(username,c)
                     c.send(data.encode('ascii'))
-                except:
+                except Exception as e:
+                    print(e)
                     c.send(self.err_msg.encode('ascii'))
             elif opcode == '2':
                 try:
@@ -323,7 +323,8 @@ class Server:
                         print("Output all accounts name: " + "\n")
                     else:
                         data = self.list_accounts(data_list[1])
-                except:
+                except Exception as e:
+                    print(e)
                     c.send(self.err_msg.encode('ascii'))
                 #list accounts
                 c.send(data.encode('ascii')) 
@@ -343,7 +344,8 @@ class Server:
                     userid = str(data_list[1])
                     data = self.pop_undelivered(userid)
                     c.send(data.encode('ascii'))
-                except:
+                except Exception as e:
+                    print(e)
                     c.send(self.err_msg.encode('ascii'))
             elif opcode == '5':
                 #Delete an account
@@ -358,6 +360,16 @@ class Server:
                 c.send(self.err_msg.encode('ascii'))
         # connection closed
         # When no user was attached to the current connection
+        try:
+            socket_string = c.getpeername()
+            row = account_df.loc[account_df['Connection'] == socket_string]
+            if not row.empty:
+                # Set the Active_Status to False
+                account_df.loc[account_df['Connection'] == socket_string, 'Active_Status'] = False
+                self.write_accounts_csv(account_df)
+        except Exception as e:
+            print(e)
+            print("hellohello")
         self.close_connection(c)
 def Main():
     server = Server()
