@@ -13,9 +13,8 @@ class Server:
         self.host = "127.0.0.1"
         self.port = 2023
         self.active_connections = {}
-
         if not os.path.exists(self.account_file):
-            columns = ['Username', 'ID', 'Connection_Socket', 'Active_Status', 'Queue']
+            columns = ['Username', 'ID', 'Active_Status', 'Connection','Queue']
             pd.DataFrame(columns=columns).to_csv(self.account_file, index=False)
 
         if not os.path.exists(self.message_file):
@@ -45,7 +44,7 @@ class Server:
         return connection
 
     def close_connection(self, connection):
-        socket_string = self.store_socket_as_string(connection)
+        socket_string = str(connection.getpeername())
         if socket_string in self.active_connections:
             del self.active_connections[socket_string]
         connection.close()
