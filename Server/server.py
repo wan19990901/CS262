@@ -11,7 +11,7 @@ class Server:
     def __init__(self):
         self.account_file = 'accounts.csv'
         self.message_file = 'messages.csv'
-        self.host = "127.0.0.1"
+        self.host = '0.0.0.0'
         self.port = 2023
         self.active_connections = {}
         if not os.path.exists(self.account_file):
