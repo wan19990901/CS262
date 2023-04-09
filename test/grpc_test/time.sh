@@ -1,1 +1,0 @@
-{ time bash test.sh; } 2> time.txt
