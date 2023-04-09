@@ -7,8 +7,11 @@ def Main():
 	host = 'localhost'
 	s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 	# s2 = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-	port = 6667
-	s.connect((host,port))
+	port = sys.argv[1]
+	try:
+		s.connect((host,int(port)))
+	except:
+		print("Print Specify the correct port address as instructed")
 		
 	def sender():
 		"""
