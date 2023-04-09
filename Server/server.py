@@ -5,8 +5,8 @@ import pandas as pd
 import os
 import time
 import io
-##Ref: https://www.geeksforgeeks.org/socket-programming-multi-threading-python/
 import multiprocessing
+
 HEALTH_CHECK_MSG = "HEALTH_CHECK"
 class Server:
     err_msg = 'Please give a valid input as instructed in the documentation'
@@ -72,11 +72,7 @@ class Server:
     # a forever loop until client wants to exit
         while True:
             # establish connection with client
-
             c, addr = s.accept()
-            # print('Connected to :', addr[0], ':', addr[1])
-            print(addr)
-            print(self.master)
             if(not self.master):
                 data = c.recv(1024).decode('ascii')
                 try: # For update
@@ -85,9 +81,10 @@ class Server:
                         c.send(data.encode('ascii'))
                     elif(data == 'master'):
                         self.master = True
-                        print('Becoming the master')
+                        # print('Becoming the master')
                         data = "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n"
                         c.send(data.encode('ascii'))
+                        # Start a new thread and return its identifier
                         start_new_thread(self.threaded, (c,))
                     else:
                         tokens = data.split(',')
@@ -100,7 +97,7 @@ class Server:
                     print('checking backup server health failed')
 
             else:
-                print('In the master')
+                # print('In the master')
                 data = "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n"
                 c.send(data.encode('ascii'))
                 # Start a new thread and return its identifier
@@ -184,10 +181,11 @@ class Server:
             message = str(sender) + " sends: " + str(msg) + "\n"
 
             # Save the message in messages.csv
-            messages_df = pd.read_csv('messages.csv')
+            messages_df = pd.read_csv(self.message_file)
             new_message = {'Sender': sender, 'Receiver': receiver, 'Message': msg, 'Time': time.time()}
             messages_df = messages_df.append(new_message, ignore_index=True)
-            messages_df.to_csv('messages.csv', index=False)
+            self.write_message_csv(messages_df)
+            self.notify_backup_servers("message", self.message_file)
 
             if (receiver_row['Active_Status'] == True):
                 client = self.get_connection_by_socket_string(receiver_row['Connection'])
@@ -200,6 +198,7 @@ class Server:
                 queue.append(message)
                 account_data.loc[account_data['ID'] == int(rscv_ID), 'Queue'] = str(queue)
                 self.write_accounts_csv(account_data)
+                self.notify_backup_servers("account", self.account_file)
                 print(data)
         else:
             print("Receiver doesn't exist: " + str(receiver) + "\n")
@@ -236,6 +235,7 @@ class Server:
             # Update the queue in the accounts CSV
             account_data.loc[account_data['ID'] == int(accountID), 'Queue'] = str(q)
             self.write_accounts_csv(account_data)
+            self.notify_backup_servers("account", self.account_file)
         else:
             data = "No new messages\n"
 
@@ -267,6 +267,7 @@ class Server:
             # Delete user from the accounts DataFrame
             accounts_df = accounts_df[accounts_df['ID'] != accountID]
             self.write_accounts_csv(accounts_df)
+            self.notify_backup_servers("account", self.account_file)
         print(f"Account ID: {accountID} has been deleted\n")
         data = "Your account has been deleted\n"
         return data
@@ -293,7 +294,7 @@ class Server:
             data = c.recv(1024)
 
             data_str = data.decode('UTF-8')
-            if data_str == HEALTH_CHECK_MSG:
+            if data_str == 'master':
                 break
             # Log out
             if not data:
@@ -301,14 +302,17 @@ class Server:
                 # Find the row in the accounts DataFrame corresponding to the socket_string
                 account_df = self.read_accounts_csv()
                 row = account_df.loc[account_df['Connection'] == socket_string]
-                print(row)
+                
                 if not row.empty:
                     # Set the Active_Status to False
                     account_df.loc[account_df['Connection'] == socket_string, 'Active_Status'] = False
                     self.write_accounts_csv(account_df)
+                    self.notify_backup_servers("account", self.account_file)
                     # Log the user logout
                     username = row.iloc[0]['Username']
                     print(username + " has logged out of the system\n")
+                else:
+                    print(f"Machine with {self.server_id} Becoming the new Master")
                 break
             # print user input
             print(data_str+"\n")
@@ -399,6 +403,7 @@ class Server:
                 # Set the Active_Status to False
                 account_df.loc[account_df['Connection'] == socket_string, 'Active_Status'] = False
                 self.write_accounts_csv(account_df)
+                self.notify_backup_servers("account", self.account_file)
         except Exception as e:
             pass
         self.close_connection(c)
