@@ -4,10 +4,10 @@ import socket
 import time
 import sys
 def Main():
-	host = '192.168.133.100'
+	host = 'localhost'
 	s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
 	# s2 = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-	port = 6666
+	port = 6667
 	s.connect((host,port))
 		
 	def sender():

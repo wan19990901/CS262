@@ -1,48 +1,62 @@
-#Ref: https://www.geeksforgeeks.org/socket-programming-multi-threading-python/
-
 import socket
 import re
 from _thread import *
 import pandas as pd
 import os
 import time
+import io
+##Ref: https://www.geeksforgeeks.org/socket-programming-multi-threading-python/
+import multiprocessing
+HEALTH_CHECK_MSG = "HEALTH_CHECK"
 class Server:
     err_msg = 'Please give a valid input as instructed in the documentation'
-    def __init__(self):
-        self.account_file = 'accounts.csv'
-        self.message_file = 'messages.csv'
-        self.host = '0.0.0.0'
-        self.port = 6666
+    def __init__(self,server_id, is_master = True, backup_servers=[]):
+        self.master = is_master
+        self.server_id = server_id
+        self.account_file = f'accounts_{self.server_id}.csv'
+        self.message_file = f'messages_{self.server_id}.csv'
+        self.host = 'localhost'
+        self.port = 6666 + self.server_id
         self.active_connections = {}
+        self.backup_servers = backup_servers
         if not os.path.exists(self.account_file):
             columns = ['Username', 'ID', 'Active_Status', 'Connection','Queue']
             pd.DataFrame(columns=columns).to_csv(self.account_file, index=False)
-
         if not os.path.exists(self.message_file):
             columns = ['Sender', 'Receiver', 'Message', 'Time']
             pd.DataFrame(columns=columns).to_csv(self.message_file, index=False)
         # p_lock = threading.Lock()
     def read_accounts_csv(self):
         return pd.read_csv(self.account_file)
-
     def write_accounts_csv(self, data):
         data.to_csv(self.account_file, index=False)
-
-    def read_messages_csv(self):
+    def read_message_csv(self):
         return pd.read_csv(self.message_file)
-
-    def write_messages_csv(self, data):
+    def write_message_csv(self, data):
         data.to_csv(self.message_file, index=False)
+    def update_csv_file(self, file_name, data):
+        data = pd.read_csv(data)
+        if(file_name == 'message'):
+            self.write_message_csv(data)
+        else:
+            self.write_accounts_csv(data)
     def get_connection_by_socket_string(self, socket_string):
         if socket_string in self.active_connections:
             return self.active_connections[socket_string]
-
     def close_connection(self, connection):
-        # socket_string = str(connection.getpeername())
-        # if socket_string in self.active_connections:
-        #     del self.active_connections[socket_string]
         connection.close()
-
+    def notify_backup_servers(self, file_name, data):
+        if self.master:
+            for backup_server in self.backup_servers:
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect((backup_server.host, backup_server.port))
+                        print('checking notify')
+                        print(type(data))
+                        s.send(f"update,{file_name},{data}".encode('ascii'))
+                        s.recv(1024)
+                except Exception as e:
+                    print(f"Error notifying backup server {backup_server['id']}: {e}")
 
     def start_server(self):
         """
@@ -58,22 +72,39 @@ class Server:
     # a forever loop until client wants to exit
         while True:
             # establish connection with client
+
             c, addr = s.accept()
-            print('Connected to :', addr[0], ':', addr[1])
-            data = "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n"
-            c.send(data.encode('ascii'))
-            # Start a new thread and return its identifier
-            start_new_thread(self.threaded, (c,))
-    # def close_server(self):        
-    #     """
-    #     Stop the chat room server.
-    #     """
-    #     try:
-    #         self.s.shutdown(socket.SHUT_RDWR)
-    #         self.s.close()
-    #         print ("Server closed")
-    #     except:
-    #         print("Server not started")
+            # print('Connected to :', addr[0], ':', addr[1])
+            print(addr)
+            print(self.master)
+            if(not self.master):
+                data = c.recv(1024).decode('ascii')
+                try: # For update
+                    if(data == HEALTH_CHECK_MSG):
+                        data = "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n"
+                        c.send(data.encode('ascii'))
+                    elif(data == 'master'):
+                        self.master = True
+                        print('Becoming the master')
+                        data = "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n"
+                        c.send(data.encode('ascii'))
+                        start_new_thread(self.threaded, (c,))
+                    else:
+                        tokens = data.split(',')
+                        cmd = tokens[0]
+                        if cmd == "update":
+                            file_name, data = tokens[1], tokens[2]
+                            self.update_csv_file(file_name, data)
+                except Exception as e: # For check health
+                    print(e)
+                    print('checking backup server health failed')
+
+            else:
+                print('In the master')
+                data = "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n"
+                c.send(data.encode('ascii'))
+                # Start a new thread and return its identifier
+                start_new_thread(self.threaded, (c,))
     def account_creation(self, username, c):
         """
         Create a new account with the given username and connection.
@@ -97,10 +128,10 @@ class Server:
         new_user = {'Username': username, 'ID': new_id, 'Connection': socket_string, 'Active_Status': True, 'Queue': '[]'}
         account_data = account_data.append(new_user, ignore_index=True)
         self.write_accounts_csv(account_data)
+        self.notify_backup_servers("account", self.account_file)
         print(f"New User created. key: {new_id}\n")
         data = f"Success New Account Creation! Your new Account ID: {new_id}\n"
         return data
-
     def list_accounts(self, pattern):
         """
         List the accounts whose usernames match the given pattern.
@@ -236,11 +267,9 @@ class Server:
             # Delete user from the accounts DataFrame
             accounts_df = accounts_df[accounts_df['ID'] != accountID]
             self.write_accounts_csv(accounts_df)
-
         print(f"Account ID: {accountID} has been deleted\n")
         data = "Your account has been deleted\n"
         return data
-
     # thread function
     def threaded(self,c):
         """
@@ -262,7 +291,10 @@ class Server:
             data_list=[]
             # data received from client
             data = c.recv(1024)
+
             data_str = data.decode('UTF-8')
+            if data_str == HEALTH_CHECK_MSG:
+                break
             # Log out
             if not data:
                 socket_string = str(c.getpeername())
@@ -368,12 +400,82 @@ class Server:
                 account_df.loc[account_df['Connection'] == socket_string, 'Active_Status'] = False
                 self.write_accounts_csv(account_df)
         except Exception as e:
-            print(e)
-            print("hellohello")
+            pass
         self.close_connection(c)
-def Main():
-    server = Server()
-    server.start_server()
-    # s.close()
-if __name__ == '__main__':
-    Main()
+
+def check_server_health(server):
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            data = HEALTH_CHECK_MSG
+            if(server.master):
+                data = 'master'
+            sock.connect((server.host,server.port))
+            sock.sendall(data.encode())
+            response = sock.recv(1024).decode()
+            if response == "To get started on this chat room, please create or login your account first and type command as instructed in the documentation \n":
+                try:
+                    sock.close()
+                except:
+                    pass
+                return True
+    except Exception as e:
+        print(f"Error checking server status: {e}")
+        try:
+            sock.close()
+        except:
+            pass
+        return False
+def monitor_servers(servers):
+    primary_server = servers[0]
+    backup_servers = servers[1:]
+
+    while True:
+        time.sleep(5)
+        if not check_server_health(primary_server):
+            print("Primary server failed, promoting a backup server.")
+            
+            # Find the first available backup server and promote it
+            for backup_server in backup_servers:
+                if check_server_health(backup_server):
+                    primary_server = backup_server
+                    primary_server.master = True
+                    backup_servers.remove(backup_server)
+                    primary_server.backup_servers = backup_servers
+                    print(f"Promoted server {backup_server.server_id} to primary server.")
+                    break
+            else:
+                print("No available backup servers to promote.")
+        else:
+            print("Primary server is still alive.")
+        
+        # Check the health of backup servers
+        for backup_server in backup_servers:
+            if not check_server_health(backup_server):
+                print(f"Backup server {backup_server.server_id} failed.")
+            else:
+                print(f"Backup server {backup_server.server_id} is still alive.")
+
+
+def main():
+    backup_server2 = Server(server_id=2, is_master=False)
+    backup_server1 = Server(server_id=1, is_master=False, backup_servers=[backup_server2])
+    primary_server = Server(server_id=0, backup_servers=[backup_server1, backup_server2])
+    
+    primary_process = multiprocessing.Process(target=primary_server.start_server)
+    backup_process1 = multiprocessing.Process(target=backup_server1.start_server)
+    backup_process2 = multiprocessing.Process(target=backup_server2.start_server)
+    monitor_process = multiprocessing.Process(target=monitor_servers, args=([primary_server, backup_server1, backup_server2],))
+
+    primary_process.start()
+    backup_process1.start()
+    backup_process2.start()
+    monitor_process.start()
+
+    primary_process.join()
+    backup_process1.join()
+    backup_process2.join()
+    monitor_process.join()
+
+if __name__ == "__main__":
+    main()
+
