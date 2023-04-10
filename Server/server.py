@@ -102,7 +102,7 @@ class Server:
                 c.send(data.encode('ascii'))
                 # Start a new thread and return its identifier
                 start_new_thread(self.threaded, (c,))
-    def account_creation(self, username, c):
+    def account_creation(self, username, socket_string):
         """
         Create a new account with the given username and connection.
 
@@ -120,8 +120,6 @@ class Server:
 
         new_id = account_data['ID'].max() + 1 if not account_data.empty else 1
         new_id = str(new_id)
-        socket_string = str(c.getpeername())
-        self.active_connections[socket_string] = c
         new_user = {'Username': username, 'ID': new_id, 'Connection': socket_string, 'Active_Status': True, 'Queue': '[]'}
         account_data = account_data.append(new_user, ignore_index=True)
         self.write_accounts_csv(account_data)
@@ -144,7 +142,7 @@ class Server:
         rematch = "^" + account_pre + "$"
         print("key: " + str(pattern) + "\n")
         regex = re.compile(rematch)
-
+        print([username for username in account_data['Username']])
         matches = [username for username in account_data['Username'] if re.match(regex, username)]
 
         if len(matches):
@@ -312,7 +310,7 @@ class Server:
                     username = row.iloc[0]['Username']
                     print(username + " has logged out of the system\n")
                 else:
-                    print(f"Machine with {self.server_id} Becoming the new Master")
+                    print(f"Machine with id {self.server_id} is now the Master server")
                 break
             # print user input
             print(data_str+"\n")
@@ -347,22 +345,30 @@ class Server:
                 #account creation
                 try:
                     username = str(data_list[1])
-                    data = self.account_creation(username,c)
+                    socket_string = str(c.getpeername())
+                    self.active_connections[socket_string] = c
+                    data = self.account_creation(username,socket_string)
                     c.send(data.encode('ascii'))
                 except Exception as e:
                     print(e)
                     c.send(self.err_msg.encode('ascii'))
             elif opcode == '2':
                 try:
-                    if(len(data_list) == 1):
-                        data = "Showing all accounts: " + ','.join(self.name_list) +"\n"
+                    print(data_list[1] == '')
+                    if(data_list[1] == ''):
+                        print('hi')
+                        name_list = self.read_accounts_csv()['Username'].values
+                        data = "Showing all accounts: " + ','.join(name_list) +"\n"
                         print("Output all accounts name: " + "\n")
                     else:
+                        print('?')
                         data = self.list_accounts(data_list[1])
                 except Exception as e:
+                    print('hello')
                     print(e)
                     c.send(self.err_msg.encode('ascii'))
                 #list accounts
+                print(data)
                 c.send(data.encode('ascii')) 
             elif opcode == '3':
                 #Send a message to a recipient
@@ -451,14 +457,14 @@ def monitor_servers(servers):
             else:
                 print("No available backup servers to promote.")
         else:
-            print("Primary server is still alive.")
+            print("Primary server is functioning properly.")
         
         # Check the health of backup servers
         for backup_server in backup_servers:
             if not check_server_health(backup_server):
                 print(f"Backup server {backup_server.server_id} failed.")
             else:
-                print(f"Backup server {backup_server.server_id} is still alive.")
+                print(f"Backup server {backup_server.server_id} is functioning properly.")
 
 
 def main():
