@@ -1,20 +1,30 @@
 # cs262-HW1 Guangya Wan & Zongjun Liu
 
 ## About
-This code implements a chat server using socket programming in Python with multi-threading. It allows the creation of new user accounts, searching for existing accounts, sending messages to other users, and deleting user accounts. The chat server is capable of handling multiple clients at the same time. Two methods(custom wire proctol and gRPC) were implemented 
+This is a simple chat room application (Extended from Design Problem 1) implemented using Python and sockets. The application supports account creation, user login, sending messages, listing available accounts, and deleting accounts. The system is built with a primary server and multiple backup servers to ensure high availability and fault tolerance.
 
-## First Implementation (Custom Wire Protocol)
+## Features
 
-Here is a brief documentation on explaning what;s about and how to run the code, for more details explanation about our design choices, please refer to the engineering_notebook.md
+- Account creation
+- User login
+- Send messages to other users
+- List available accounts
+- Retrieve undelivered messages
+- Delete an account
+- Primary and backup servers for fault tolerance
 
 ### Download
+
+1. Ensure that you have Python 3.6 or later installed on your system.
+2. Clone the repository or download the source code:
+
 Run the following command in your terminal to save the repository in your system
 > $ git clone https://github.com/wan19990901/CS262.git
+> $ git switch replication
 
-Then install the necssary dependecy, which is just pytest
+Then install the necssary dependecy, which is just pandas
 
 > $ pip install -r requirment.txt
-
 
 ### Run
 Once you are in the directory where `server.py` or `client.py` file exists, run by typing the following commands in your terminal.
@@ -24,7 +34,7 @@ Once you are in the directory where `server.py` or `client.py` file exists, run 
 
   
 ### Client
-> $ python client.py 
+> $ python client.py 6666 (By default the primary port is 6666, and 6667/6668 are the ports for backup servers. You can customize the port number, but you also need to change accordingly in the server)
 
 You can run multiple clients ay the same time by creating multiple processes. 
 
@@ -47,38 +57,22 @@ Op 'bye' = Logged off. Similar to delete account but the information is kept in 
 
 ### Test
 
-In the test folder, first run the server scripts:
+We tested (With Python's unittest module) the basic functionality of our server, thread, helper function, and replication code. Due to time limit it's certainly not inclusive, and You can play around and add your own tests in the respectively python scripts.
 
-> $ bash server.sh
-
-Then run the test scipts which creates two clients and run multiple pre-defined instrucitons, and saved results in the output.txt files
+In the Server folder, Simply run the server scripts:
 
 > $ bash test.sh
 
-Finally, run pytest on the test.py
-
-> $ pytest test.py
-
-Note that if you can the pre-defined instrucitons on client1/2.sh, you also need to change the tests on test.py to make it right.
-
-You can also run the command to time the test scripts
-
-> $ bash time.sh
-
-This will output a file called time.txt, which will be used for performance comparison with the gRPC counterparts.
-
-Note that you should not run pytest after time, or you need to restart the server.
+This script runs Python unit tests, installs the coverage package, measures code coverage during test execution, and generates an HTML coverage report. It helps ensure the code is well-tested and identifies areas where more tests may be needed.
 
 ### Example
-For server and client running on the same system
 
-Note that You do not have to interact with the server, the message below are just automatic feedback based on the client's input. You can also refer the feedback to get an idea on the order of input of two clients if you want to replicate this work.
-
+Note that here is an example of basic funcionality. For advanced features such as server replication/2-fault-tolerance/Clients connections from external machine, we will show them in the demo day!
 **Server**
 > $ python server.py
 <pre>
 				SERVER WORKING 
-socket binded to port 2023
+socket binded to port 6666
 socket is listening
 Connected to : 127.0.0.1 : 49032
 Connected to : 127.0.0.1 : 49034
@@ -184,44 +178,3 @@ User Not Found!
 
 bye
 </pre>
-
-## Second Implementation (gRPC)
-
-
-
-### Download
-
-First cd into the grpc directory Then install the necssary dependecy
-
-> $ pip install -r requirment.txt
-
-Then to generate necessary python files, run the following command under the grpc directory 
-
-> $ python3 -m grpc_tools.protoc -Iprotos --python_out=. --grpc_python_out=. protos/chatservice.proto
-
-### Run
-Once you are in the directory where `chatservice_pb2_grpc.py` and `chatservice_pb2.py` file exist, run by typing the following commands in your terminal.
-
-### Server
-> $ python3 chatservice_server.py
-  
-### Client
-> $ python3 chatservice_client.py
-
-You can run multiple clients ay the same time by creating multiple processes. 
-
-### Wire Protocol:
-
-Op '0' = Account Login, e.g. 0|wayne --> User with ID wayne logged in (need to be created at first)
-
-Op '1' = Account Creation, e.g. 1|John --> Creates an account with username John
-
-Op '2' = List User, e.g., 2|J.hn --> returns list of user whose name is J*hn
-
-Op '3'  = Send Message to a particular user, e.g., 3|accountID|message --> Send a new message immediately to another account if online (send to mailbox if the other account is offline)
-
-All messages that are received during log off will be prompted once the user log in 
-
-Op '5' = Delete Account, e.g. 5| --> Delete Account and quit the client from the chat service
-
-Op 'X' = Logged off. Similar to delete account but the information is kept in the server so that people can still message you, and you can use '0' to relogin.
